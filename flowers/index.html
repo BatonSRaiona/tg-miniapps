@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Қызғалдақ — цветы и клубника</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="../app.css">
+<style>
+  .hero .info { padding-right: 0; }
+  .hero .nm { padding-right: 64px; }
+  .days { grid-template-columns: repeat(3, 1fr); }
+  .slots { grid-template-columns: repeat(4, 1fr); margin-top: 6px; }
+  .wrap { display: none; }
+  .wrap.show { display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tabs" id="tabs"></div>
+  <div class="hero">
+    <img class="ph" id="ph" alt="">
+    <div class="info">
+      <div class="nm" id="nm"></div>
+      <div class="ds" id="ds"></div>
+      <div class="sizes" id="sizes"></div>
+    </div>
+    <div class="pager" id="pager"><button id="pv" aria-label="Предыдущий">‹</button><button id="nx" aria-label="Следующий">›</button></div>
+  </div>
+
+  <div class="lbl">Добавить</div>
+  <div class="chips" id="extras"></div>
+
+  <div class="lbl">Получение</div>
+  <div class="chips" id="ways"></div>
+  <div class="wrap" id="addr">
+    <input class="field" id="a" placeholder="Адрес: улица, дом, квартира" autocomplete="street-address" maxlength="200">
+    <input class="field" id="tel" placeholder="Телефон получателя" type="tel" autocomplete="tel" maxlength="30">
+  </div>
+
+  <div class="lbl">Когда</div>
+  <div class="grid days" id="days"></div>
+  <div class="grid slots" id="slots"></div>
+  <div class="note" id="note"></div>
+
+  <div class="bar">
+    <div class="qty"><button id="minus" aria-label="Меньше">−</button><span id="q">1</span><button id="plus" aria-label="Больше">+</button></div>
+    <button class="go" id="go"></button>
+  </div>
+</div>
+<script src="../app.js"></script>
+<script>
+// Каталог — тот же, что в flowers/bot.py (CATALOG). Меняете цены там — поменяйте и здесь.
+const TABS = ["Букеты", "Клубника", "Наборы"];
+// [вкладка, фото, название, описание, [[размер, цена], ...]]
+const P = [
+  [0, "tulips", "Тюльпаны", "Сорта микс, лента", [["15 шт", 12000], ["25 шт", 18500], ["51 шт", 36000]]],
+  [0, "roses", "Красные розы", "Розы, гиперикум, хвоя", [["11 шт", 15000], ["25 шт", 29000], ["51 шт", 55000]]],
+  [1, "straw-choco", "Клубника в шоколаде", "Бельгийский шоколад", [["9 шт", 6000], ["16 шт", 9900], ["25 шт", 14900]]],
+  [1, "straw-assorti", "Ассорти", "Тёмный, молочный, белый", [["9 шт", 6500], ["16 шт", 10500]]],
+  [2, "flowerbox", "Цветы в коробке", "Розы, хризантемы, эустома", [["Средняя", 19000], ["Большая", 28000]]],
+  [2, "straw-box", "Подарочный бокс", "Клубника в шоколаде в коробке", [["12 шт", 11500], ["20 шт", 17500]]],
+];
+const X = [["💌", "Открытка", 500], ["🎈", "Шар", 1500], ["🍓", "Ещё 9 ягод", 6000]];
+const DL = 2000, PICKUP = "Алматы, ул. Жамбыла, 114";
+const SL = [[10, 13], [13, 16], [16, 19], [19, 22]];
+
+const NOW = almatyNow();
+const first = SL.findIndex(s => s[1] * 60 - NOW.mins >= 120);   // первый интервал, который ещё можно сегодня
+const firstToday = first < 0 ? SL.length : first;
+const S = { p: 0, z: 0, x: 0, q: 1, dv: 1, d: firstToday < SL.length ? 0 : 1, t: -1 };
+
+function sums() {
+  const one = P[S.p][4][S.z][1] + X.reduce((a, e, j) => a + (S.x >> j & 1 ? e[2] : 0), 0);
+  return one * S.q + (S.dv ? DL : 0);
+}
+
+function render() {
+  const pr = P[S.p], inTab = P.map((x, j) => j).filter(j => P[j][0] === pr[0]);
+  const tabs = document.getElementById("tabs"); tabs.innerHTML = "";
+  TABS.forEach((x, j) => {
+    const b = h("button", "tab" + (j === pr[0] ? " on" : ""), x);
+    b.onclick = () => { if (pr[0] !== j) { S.p = P.findIndex(p => p[0] === j); S.z = 0; tick(); render(); } };
+    tabs.appendChild(b);
+  });
+  document.getElementById("ph").src = "img/" + pr[1] + ".jpg";
+  document.getElementById("nm").textContent = pr[2];
+  document.getElementById("ds").textContent = pr[3];
+  document.getElementById("pager").style.display = inTab.length > 1 ? "" : "none";
+  const step = k => { const i = inTab.indexOf(S.p); S.p = inTab[(i + k + inTab.length) % inTab.length]; S.z = 0; tick(); render(); };
+  document.getElementById("pv").onclick = () => step(-1);
+  document.getElementById("nx").onclick = () => step(1);
+
+  const sz = document.getElementById("sizes"); sz.innerHTML = "";
+  pr[4].forEach((s, j) => {
+    const b = h("button", "size" + (j === S.z ? " on" : ""), "<b>" + s[0] + "</b><small>" + rub(s[1]) + "</small>");
+    b.onclick = () => { S.z = j; tick(); render(); };
+    sz.appendChild(b);
+  });
+
+  const ex = document.getElementById("extras"); ex.innerHTML = "";
+  X.forEach((e, j) => {
+    const b = h("button", "chip" + (S.x >> j & 1 ? " on" : ""), '<span class="em">' + e[0] + "</span>" + e[1] + " +" + rub(e[2]));
+    b.onclick = () => { S.x ^= 1 << j; tick(); render(); };
+    ex.appendChild(b);
+  });
+
+  const ws = document.getElementById("ways"); ws.innerHTML = "";
+  [[1, "🚚", "Доставка +" + rub(DL)], [0, "🏪", "Самовывоз"]].forEach(([v, em, txt]) => {
+    const b = h("button", "chip" + (S.dv === v ? " on" : ""), '<span class="em">' + em + "</span>" + txt);
+    b.onclick = () => { S.dv = v; tick(); render(); };
+    ws.appendChild(b);
+  });
+  document.getElementById("addr").className = "wrap" + (S.dv ? " show" : "");
+
+  const ds = document.getElementById("days"); ds.innerHTML = "";
+  for (let d = 0; d < 3; d++) {
+    const dt = addDays(NOW.iso, d);
+    const b = h("button", "day" + (d === S.d ? " on" : "") + (d === 0 && firstToday >= SL.length ? " off" : ""),
+      "<b style='font-size:14px'>" + ["Сегодня", "Завтра", WD[dt.getUTCDay()].replace(/^./, c => c.toUpperCase())][d] +
+      "</b><small>" + dt.getUTCDate() + " " + MO[dt.getUTCMonth()] + "</small>");
+    b.onclick = () => { S.d = d; if (d === 0 && S.t < firstToday) S.t = -1; tick(); render(); };
+    ds.appendChild(b);
+  }
+  const ss = document.getElementById("slots"); ss.innerHTML = "";
+  SL.forEach((s, t) => {
+    const late = S.d === 0 && t < firstToday;
+    const b = h("button", "chip" + (t === S.t ? " on" : "") + (late ? " off" : ""), s[0] + "–" + s[1]);
+    b.onclick = () => { S.t = t; tick(); render(); };
+    ss.appendChild(b);
+  });
+  document.getElementById("note").textContent = S.dv
+    ? "Курьер позвонит получателю за 30 минут до доставки."
+    : "📍 " + PICKUP + ". Код выдачи пришлём в чат.";
+
+  document.getElementById("q").textContent = S.q;
+  const go = document.getElementById("go");
+  go.textContent = "Заказать · " + rub(sums());
+}
+
+for (const f of document.querySelectorAll(".field")) f.addEventListener("input", () => f.classList.remove("bad"));
+document.getElementById("minus").onclick = () => { if (S.q > 1) { S.q--; tick(); render(); } };
+document.getElementById("plus").onclick = () => { if (S.q < 9) { S.q++; tick(); render(); } };
+document.getElementById("go").onclick = () => {
+  if (S.t < 0) { toast("Выберите время"); document.getElementById("slots").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+  const a = document.getElementById("a"), tel = document.getElementById("tel");
+  if (S.dv) {
+    for (const f of [a, tel]) {
+      f.classList.remove("bad");
+      if (f.value.trim().length < (f === a ? 5 : 6)) {
+        void f.offsetWidth; f.classList.add("bad"); f.focus();
+        toast(f === a ? "Укажите адрес доставки" : "Укажите телефон получателя");
+        return;
+      }
+    }
+  }
+  const o = { p: S.p, z: S.z, x: S.x, q: S.q, dv: S.dv, d: addDays(NOW.iso, S.d).toISOString().slice(0, 10), t: S.t };
+  if (S.dv) { o.a = a.value.trim(); o.ph = tel.value.trim(); }
+  sendToBot(o);
+};
+initApp();
+render();
+</script>
+</body>
+</html>
