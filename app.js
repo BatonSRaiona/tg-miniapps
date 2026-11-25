@@ -2,7 +2,7 @@
 const tg = (window.Telegram && window.Telegram.WebApp) || null;
 
 function initApp() {
-  const scheme = tg && tg.colorScheme ? tg.colorScheme : "dark";
+  const scheme = tg && tg.platform !== "unknown" && tg.colorScheme ? tg.colorScheme : "dark";
   document.documentElement.dataset.scheme = scheme;
   if (!tg) return;
   tg.ready();
