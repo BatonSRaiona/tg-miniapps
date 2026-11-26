@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Барбершоп «Ұста» — запись</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="../app.css">
+<style>
+  .hero.col { flex-direction: column; gap: 0; }
+  .hero .row { display: flex; gap: 12px; }
+  .hero .ph { height: 104px; }
+  .svc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .svc.two { grid-template-columns: repeat(2, 1fr); }
+  .svc.one { grid-template-columns: 1fr; }
+  .svc .size b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+  .price { margin-top: auto; font-size: 15px; font-weight: 700; }
+  .av {
+    width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center;
+    font-size: 12px; font-weight: 700; color: #fff; margin-left: -6px;
+  }
+  .chip.on .av { box-shadow: 0 0 0 2px var(--acc); }
+  .days { grid-template-columns: repeat(7, 1fr); }
+  .times { grid-template-columns: repeat(5, 1fr); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tabs" id="tabs"></div>
+  <div class="hero col">
+    <div class="row">
+      <img class="ph" id="ph" alt="">
+      <div class="info">
+        <div class="nm" id="nm"></div>
+        <div class="ds" id="ds"></div>
+        <div class="price" id="pr"></div>
+      </div>
+    </div>
+    <div class="svc" id="svc"></div>
+  </div>
+
+  <div class="lbl">Барбер</div>
+  <div class="chips" id="masters"></div>
+
+  <div class="lbl">День</div>
+  <div class="grid days" id="days"></div>
+
+  <div class="lbl">Время</div>
+  <div class="grid times" id="times"></div>
+  <div class="note" id="note">📍 Алматы, ул. Сейфуллина, 531, вход со двора</div>
+
+  <div class="bar"><button class="go" id="go"></button></div>
+</div>
+<script src="../app.js"></script>
+<script>
+// Каталог — тот же, что в barber/bot.py (CATALOG). Меняете цены там — поменяйте и здесь.
+// [вкладка, фото, [[полное название, коротко, минут, цена], ...]]
+const C = [
+  ["Стрижка", "haircut", [["Мужская стрижка", "Стрижка", 60, 7000], ["Стрижка машинкой", "Машинкой", 30, 4000], ["Фейд", "Фейд", 60, 8000]]],
+  ["Борода", "beard", [["Моделирование бороды", "Борода", 30, 4500], ["Королевское бритьё", "Бритьё", 45, 6000], ["Камуфляж седины", "Камуфляж", 30, 5000]]],
+  ["Комплекс", "combo", [["Стрижка и борода", "Стрижка+борода", 90, 10500], ["Отец и сын", "Отец и сын", 90, 12000]]],
+  ["Дети", "kids", [["Детская стрижка", "Детская · до 12 лет", 45, 5000]]],
+];
+const M = [["Арман", [0, 1, 2]], ["Даурен", [0, 1, 2, 3]], ["Тимур", [0, 2, 3]], ["Ербол", [0, 1, 2]], ["Алихан", [1, 2]]];
+const MC = ["#b5654a", "#4f7fc4", "#6a8f4f", "#8a5fb5", "#c4914f"];
+const DESC = ["Классика, фейды, текстура. Мытьё и укладка включены", "Горячее полотенце, опасная бритва, масло", "Всё сразу — выходит дешевле", "Для мальчиков до 12 лет, с мультиками"];
+const DAYS = 7, SLOTS = 10, FIRST = 11;
+
+// Занятость: «постоянные клиенты» по той же формуле, что в боте, плюс реальные записи из ссылки (?u=дата&b=...).
+function fnv(s) {
+  let x = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  x ^= x >>> 16; x = Math.imul(x, 0x85ebca6b) >>> 0; x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35) >>> 0;
+  return (x ^ x >>> 16) >>> 0;
+}
+const q = new URLSearchParams(location.search);
+const real = new Set();
+if (q.get("u") && q.get("b")) {
+  for (const it of q.get("b").split(",")) {
+    const [off, m, t, len] = it.split(".").map(Number);
+    const iso = addDays(q.get("u"), off).toISOString().slice(0, 10);
+    for (let k = 0; k < len; k++) real.add(m + "|" + iso + "|" + (t + k));
+  }
+}
+const NOW = almatyNow();
+const dayIso = d => addDays(NOW.iso, d).toISOString().slice(0, 10);
+function busy(m, d, t) {
+  const iso = dayIso(d), key = m + "|" + iso + "|" + t;
+  if (d === 0 && (FIRST + t) * 60 < NOW.mins + 60) return true;
+  return (fnv(key) >>> 24) < 72 || real.has(key);
+}
+function freeMasters(c, i, m, d, t) {
+  const len = Math.ceil(C[c][2][i][2] / 60);
+  const list = m >= 0 ? [m] : M.map((x, j) => j).filter(j => M[j][1].includes(c));
+  return list.filter(j => t + len <= SLOTS && ![...Array(len).keys()].some(k => busy(j, d, t + k)));
+}
+const dayOk = (s, d) => [...Array(SLOTS).keys()].some(t => freeMasters(s.c, s.i, s.m, d, t).length);
+
+const S = { c: 0, i: 0, m: -1, d: -1, t: -1 };
+function fix() {
+  if (S.m >= 0 && !M[S.m][1].includes(S.c)) S.m = -1;
+  if (S.d < 0 || !dayOk(S, S.d)) { S.d = [...Array(DAYS).keys()].find(d => dayOk(S, d)) ?? -1; S.t = -1; }
+  if (S.t >= 0 && !freeMasters(S.c, S.i, S.m, S.d, S.t).length) S.t = -1;
+}
+
+function render() {
+  fix();
+  const cat = C[S.c], svc = cat[2][S.i];
+  const tabs = document.getElementById("tabs"); tabs.innerHTML = "";
+  C.forEach((x, j) => {
+    const b = h("button", "tab" + (j === S.c ? " on" : ""), x[0]);
+    b.onclick = () => { if (S.c !== j) { S.c = j; S.i = 0; tick(); render(); } };
+    tabs.appendChild(b);
+  });
+  document.getElementById("ph").src = "img/" + cat[1] + ".jpg";
+  document.getElementById("nm").textContent = svc[0];
+  document.getElementById("ds").textContent = DESC[S.c];
+  document.getElementById("pr").innerHTML = rub(svc[3]) + ' <span class="ds">· ' + svc[2] + " мин</span>";
+
+  const sv = document.getElementById("svc"); sv.innerHTML = ""; sv.className = "svc" + (cat[2].length === 2 ? " two" : cat[2].length === 1 ? " one" : "");
+  cat[2].forEach((x, j) => {
+    const b = h("button", "size" + (j === S.i ? " on" : ""), "<b>" + x[1] + "</b><small>" + rub(x[3]) + "</small>");
+    b.onclick = () => { S.i = j; tick(); render(); };
+    sv.appendChild(b);
+  });
+
+  const ms = document.getElementById("masters"); ms.innerHTML = "";
+  const any = h("button", "chip" + (S.m < 0 ? " on" : ""), '<span class="em">✨</span>Любой');
+  any.onclick = () => { S.m = -1; tick(); render(); };
+  ms.appendChild(any);
+  M.forEach((x, j) => {
+    if (!x[1].includes(S.c)) return;
+    const b = h("button", "chip" + (j === S.m ? " on" : ""),
+      '<span class="av" style="background:' + MC[j] + '">' + x[0][0] + "</span>" + x[0]);
+    b.onclick = () => { S.m = j; tick(); render(); };
+    ms.appendChild(b);
+  });
+
+  const ds = document.getElementById("days"); ds.innerHTML = "";
+  for (let d = 0; d < DAYS; d++) {
+    const dt = addDays(NOW.iso, d);
+    const b = h("button", "day" + (d === S.d ? " on" : "") + (dayOk(S, d) ? "" : " off"),
+      "<small>" + (d === 0 ? "сег" : WD[dt.getUTCDay()]) + "</small><b>" + dt.getUTCDate() + "</b>");
+    b.onclick = () => { S.d = d; S.t = -1; tick(); render(); };
+    ds.appendChild(b);
+  }
+
+  const ts = document.getElementById("times"); ts.innerHTML = "";
+  for (let t = 0; t < SLOTS; t++) {
+    const ok = S.d >= 0 && freeMasters(S.c, S.i, S.m, S.d, t).length;
+    const b = h("button", "chip" + (t === S.t ? " on" : "") + (ok ? "" : " off"), (FIRST + t) + ":00");
+    b.onclick = () => { S.t = t; tick(); render(); };
+    ts.appendChild(b);
+  }
+
+  const go = document.getElementById("go");
+  go.className = "go" + (S.t < 0 ? " wait" : "");
+  go.textContent = S.t < 0 ? "Выберите время" : "Записаться · " + rub(svc[3]);
+}
+
+document.getElementById("go").onclick = () => {
+  if (S.t < 0) { toast(S.d < 0 ? "На ближайшую неделю мест нет" : "Выберите время"); return; }
+  sendToBot({ c: S.c, i: S.i, m: S.m, d: dayIso(S.d), t: S.t });
+};
+initApp();
+render();
+</script>
+</body>
+</html>
